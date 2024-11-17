@@ -47,7 +47,10 @@ leak_report
 
 # logs
 *.log
+
+# private config and keys
 /.bill/
+/.optimus/
 
 # nix development
 .direnv

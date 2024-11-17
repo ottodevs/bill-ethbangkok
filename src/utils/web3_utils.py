@@ -2,6 +2,7 @@
 """Web3 utilities."""
 
 import sys
+import json
 from typing import Optional, Dict, Any
 import requests
 from web3 import Web3
@@ -9,37 +10,99 @@ from web3.types import Wei
 from halo import Halo
 from eth_utils import to_wei
 
+def debug_rpc_response(response: requests.Response) -> None:
+    """Debug RPC response."""
+    print("\n=== RPC Response Debug ===")
+    print(f"Status Code: {response.status_code}")
+    print("Headers:")
+    for key, value in response.headers.items():
+        print(f"  {key}: {value}")
+    print("\nContent Type:", response.headers.get('content-type', 'Not specified'))
+    
+    # Try to parse as JSON first
+    try:
+        json_response = response.json()
+        print("\nJSON Response:")
+        print(json.dumps(json_response, indent=2))
+    except json.JSONDecodeError:
+        # If not JSON, show first 500 chars of text
+        print("\nNon-JSON Response (first 500 chars):")
+        print(response.text[:500])
+    print("=== End Debug ===\n")
+
 def check_rpc(rpc_url: str) -> None:
     """Check RPC endpoint validity."""
     spinner = Halo(text="Checking RPC...", spinner="dots")
     spinner.start()
 
+    # 1. First try a basic eth_blockNumber call
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_blockNumber",
+        "params": [],
+        "id": 1
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "bill-yield-agent/1.0.0"
+    }
+
     try:
-        # Setup web3
-        web3 = Web3(Web3.HTTPProvider(rpc_url))
+        print(f"\nTesting RPC endpoint: {rpc_url}")
+        response = requests.post(rpc_url, json=payload, headers=headers)
         
-        # Check basic connection
-        if not web3.is_connected():
-            spinner.fail("Could not connect to RPC")
+        # If response is not JSON, something's wrong
+        if 'application/json' not in response.headers.get('content-type', ''):
+            print("Warning: Response is not JSON")
+            debug_rpc_response(response)
+            spinner.fail("RPC returned non-JSON response")
             sys.exit(1)
 
-        # Check chain ID (Base mainnet should be 8453)
-        chain_id = web3.eth.chain_id
-        if chain_id != 8453:
-            spinner.fail(f"Wrong network. Expected Base (8453), got chain ID: {chain_id}")
+        # Try to parse response
+        try:
+            result = response.json()
+            if 'error' in result:
+                print(f"RPC Error: {result['error']}")
+                spinner.fail("RPC returned error")
+                sys.exit(1)
+            if 'result' not in result:
+                print("RPC Response missing 'result' field:")
+                print(json.dumps(result, indent=2))
+                spinner.fail("Invalid RPC response format")
+                sys.exit(1)
+                
+            # If we got here, basic RPC call worked
+            block_number = int(result['result'], 16)
+            print(f"Current block number: {block_number}")
+            
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON response: {str(e)}")
+            debug_rpc_response(response)
+            spinner.fail("Invalid JSON response")
             sys.exit(1)
 
-        # Check if we can get the latest block
-        latest_block = web3.eth.get_block('latest')
-        if not latest_block:
-            spinner.fail("Could not get latest block")
+        # 2. Now verify chain ID
+        payload['method'] = "eth_chainId"
+        response = requests.post(rpc_url, json=payload, headers=headers)
+        result = response.json()
+        
+        if 'result' in result:
+            chain_id = int(result['result'], 16)
+            if chain_id != 8453:
+                spinner.fail(f"Wrong network. Expected Base (8453), got chain ID: {chain_id}")
+                sys.exit(1)
+            
+            spinner.succeed(f"RPC checks passed. Connected to Base network (Chain ID: {chain_id})")
+            return
+        else:
+            spinner.fail("Could not verify chain ID")
             sys.exit(1)
 
-        spinner.succeed(f"RPC checks passed. Connected to Base network (Chain ID: {chain_id})")
-        return
-
-    except Exception as e:
-        spinner.fail(f"Error checking RPC: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {str(e)}")
+        spinner.fail("Failed to connect to RPC")
         sys.exit(1)
 
 def get_erc20_balance(web3: Web3, token_address: str, account_address: str) -> int:

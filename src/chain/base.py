@@ -15,6 +15,15 @@ from src.config.constants import (
     SUGGESTED_TOP_UP_DEFAULT,
     SAFETY_MARGIN
 )
+from src.utils.web3_utils import check_rpc
+from src.config.settings import Config
+from src.chain.wallet import Wallet
+
+class ChainConfig:
+    def __init__(self, rpc_url: str, chain_id: int):
+        self.rpc_url = rpc_url
+        self.chain_id = chain_id
+        self.web3 = Web3(Web3.HTTPProvider(rpc_url))
 
 def calculate_fund_requirement(rpc: str, fee_history_blocks: int, gas_amount: int, 
                              fee_history_percentile: int = 50) -> Optional[int]:
@@ -56,74 +65,29 @@ def verify_funding(web3: Web3, address: str, required_amount: int) -> bool:
     balance = web3.eth.get_balance(address)
     return balance >= required_amount
 
-def setup_base_chain(config: Any, wallet: Any) -> Optional[Dict[str, Any]]:
+def setup_base_chain(config: Config, wallet: Wallet) -> Optional[ChainConfig]:
     """Setup Base chain configuration."""
     try:
-        chain_metadata = CHAIN_ID_TO_METADATA[8453]  # Base chain ID
-        chain_type = "base"
+        # Verificar RPC
+        if not config.base_rpc:
+            raise Exception("Base RPC URL not configured")
+            
+        chain_config = ChainConfig(
+            rpc_url=config.base_rpc,
+            chain_id=8453  # Base chain ID
+        )
         
-        print("[Base] Setting up Base chain configuration...")
+        # Verificar conexión
+        if not chain_config.web3.is_connected():
+            raise Exception("Cannot connect to Base RPC")
+            
+        # Verificar balance
+        balance = chain_config.web3.eth.get_balance(wallet.account.address)
+        if balance == 0:
+            print(f"Warning: Wallet {wallet.account.address} has no balance on Base")
+            
+        return chain_config
         
-        # Setup web3 and verify RPC
-        web3 = Web3(Web3.HTTPProvider(config.base_rpc))
-        if not web3.is_connected():
-            print("[Base] Failed to connect to Base RPC")
-            return None
-
-        # Verify chain ID
-        chain_id = web3.eth.chain_id
-        if chain_id != 8453:
-            print(f"[Base] Wrong network. Expected Base (8453), got chain ID: {chain_id}")
-            return None
-
-        # Calculate funding requirements
-        try:
-            agent_fund_requirement = fetch_agent_fund_requirement(config.base_rpc)
-            if agent_fund_requirement is None:
-                print("[Base] Using default fund requirement")
-                agent_fund_requirement = SUGGESTED_TOP_UP_DEFAULT * 5
-        except Exception as e:
-            print(f"[Base] Error calculating fund requirement: {str(e)}")
-            print("[Base] Using default fund requirement")
-            agent_fund_requirement = SUGGESTED_TOP_UP_DEFAULT * 5
-
-        # Check wallet funding
-        required_balance = agent_fund_requirement + SAFETY_MARGIN
-        address = wallet.crypto.address
-        
-        print(f"[Base] Please make sure main wallet {address} has at least {wei_to_token(required_balance, 'ETH')}")
-        
-        spinner = Halo(text="[Base] Waiting for funds...", spinner="dots")
-        spinner.start()
-
-        try:
-            while not verify_funding(web3, address, required_balance):
-                time.sleep(1)
-        except Exception as e:
-            spinner.fail(f"[Base] Error verifying funding: {str(e)}")
-            return None
-
-        spinner.succeed(f"[Base] Main wallet updated balance: {wei_to_token(web3.eth.get_balance(address), 'ETH')}")
-
-        # Create safe if it doesn't exist
-        try:
-            if not wallet.safes.get(chain_type):
-                print("[Base] Creating Safe")
-                wallet.create_safe(
-                    chain_type=chain_type,
-                    rpc=config.base_rpc,
-                )
-        except Exception as e:
-            print(f"[Base] Error creating safe: {str(e)}")
-            return None
-
-        return {
-            "chain_id": 8453,
-            "metadata": chain_metadata,
-            "agent_fund_requirement": agent_fund_requirement,
-            "safe_address": wallet.safes.get(chain_type)
-        }
-
     except Exception as e:
-        print(f"[Base] Error in setup_base_chain: {str(e)}")
+        print(f"Error setting up Base chain: {str(e)}")
         return None

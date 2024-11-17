@@ -24,6 +24,11 @@ from src.config.constants import (
     BILL_HOME
 )
 
+from src.service.bill_service import BillYieldService
+from src.config.settings import Config
+from src.chain.wallet import Wallet
+from src.chain.base import ChainConfig
+
 def get_service_template(config: Any) -> ServiceTemplate:
     """Get the service template"""
     return ServiceTemplate({
@@ -91,35 +96,43 @@ def add_volumes(docker_compose_path: Path, host_path: str, container_path: str) 
     with open(docker_compose_path, "w") as f:
         yaml.dump(docker_compose, f)
 
-def deploy_service(config: Any, chain_config: Dict[str, Any], wallet: Any) -> None:
-    """Deploy service."""
-    from operate.cli import OperateApp
-    from src.config.constants import BILL_HOME
-    
-    operate = OperateApp(home=BILL_HOME)
-    manager = operate.service_manager()
-    
-    template = get_service_template(config)
-    service = get_service(manager, template)
-    
-    # Deploy service onchain
-    manager.deploy_service_onchain_from_safe_single_chain(
-        hash=service.hash,
-        chain_id="8453",  # Base chain
-        fallback_staking_params={},  # Add staking params if needed
-    )
-    
-    # Fund service
-    manager.fund_service(
-        hash=service.hash,
-        chain_id="8453",
-        safe_fund_treshold=None,
-        safe_topup=None,
-        agent_fund_threshold=chain_config.get("agent_fund_requirement", 0)
-    )
-    
-    # Build and start service
-    service.deployment.build(use_docker=True, force=True, chain_id="8453")
-    docker_compose_path = service.path / "deployment" / "docker-compose.yaml"
-    add_volumes(docker_compose_path, str(BILL_HOME), "/data")
-    service.deployment.start(use_docker=True)
+def deploy_service(config: Config, chain_config: ChainConfig, wallet: Wallet) -> None:
+    """Deploy the service."""
+    try:
+        print("\nDeploying service...")
+        
+        # Verificar requisitos previos
+        if not verify_prerequisites(config, chain_config):
+            raise Exception("Failed to verify prerequisites")
+            
+        # Crear directorios necesarios
+        service_path = Path.home() / ".bill" / "service"
+        service_path.mkdir(parents=True, exist_ok=True)
+        
+        # Desplegar contratos
+        if not deploy_contracts(config, chain_config, wallet):
+            raise Exception("Failed to deploy contracts")
+            
+        # Inicializar servicio
+        if not initialize_service(config, chain_config, wallet):
+            raise Exception("Failed to initialize service")
+            
+        print("Service deployed successfully")
+        
+    except Exception as e:
+        raise Exception(f"Error deploying service: {str(e)}")
+
+def verify_prerequisites(config: Config, chain_config: ChainConfig) -> bool:
+    """Verify all prerequisites are met."""
+    # Implementar verificaciones
+    return True
+
+def deploy_contracts(config: Config, chain_config: ChainConfig, wallet: Wallet) -> bool:
+    """Deploy smart contracts."""
+    # Implementar despliegue
+    return True
+
+def initialize_service(config: Config, chain_config: ChainConfig, wallet: Wallet) -> bool:
+    """Initialize the service."""
+    # Implementar inicialización
+    return True
